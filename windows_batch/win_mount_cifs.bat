@@ -54,6 +54,8 @@ if !errorlevel! equ 0 (
 	    net use !DRIVE_LETTER!: \\%TARGET_IP%\!SHARE_NAME! /persistent:no > nul 2>&1
 		if !errorlevel! equ 0 (
             echo [%time%] ✓ 成功映射共享 ^"!SHARE_NAME!^" 到驱动器 ^"!DRIVE_LETTER!^"
+:: 重命名映射的驱动器名
+            reg add "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2\##!TARGET_IP!#!SHARE_NAME!" /v _LabelFromReg /t REG_SZ /d "!SHARE_NAME!" /f
 		) else (
 			echo [%time%] ❌ 映射共享 ^"!SHARE_NAME!^" 到驱动器 ^"!DRIVE_LETTER!^" 失败（可能路径错误，用户信息有误），重试...
 			goto MOUNT_RETRY
