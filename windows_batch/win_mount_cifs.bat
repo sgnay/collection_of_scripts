@@ -21,6 +21,8 @@ set "PING_TIMEOUT=3000"
 set "RETRY_INTERVAL=5"
 :: 重试次数
 set "RETRY_COUNT=999"
+:: 挂载持久化
+set "PST=yes"
 
 :: --------- 配置结束 ---------
 
@@ -49,9 +51,9 @@ if !errorlevel! equ 0 (
 		)
 		echo [%time%] 断开盘符 ^"!DRIVE_LETTER!:^" ...
 		net use !DRIVE_LETTER!: /d /y > nul 2>&1
-:: net use %DRIVE_LETTER% \\%TARGET_IP%\%SHARE_NAME% %PASSWORD% /user:%USERNAME% /persistent:no
+:: net use %DRIVE_LETTER% \\%TARGET_IP%\%SHARE_NAME% %PASSWORD% /user:%USERNAME% /persistent:%PST%
 		echo [%time%] 映射共享 ^"!SHARE_NAME!^" 到盘符: ^"!DRIVE_LETTER!^" ...
-	    net use !DRIVE_LETTER!: \\%TARGET_IP%\!SHARE_NAME! /persistent:no > nul 2>&1
+	    net use !DRIVE_LETTER!: \\%TARGET_IP%\!SHARE_NAME! /persistent:%PST% > nul 2>&1
 		if !errorlevel! equ 0 (
             echo [%time%] ✓ 成功映射共享 ^"!SHARE_NAME!^" 到驱动器 ^"!DRIVE_LETTER!^"
 :: 重命名映射的驱动器名
