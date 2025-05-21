@@ -8,7 +8,24 @@ chcp 65001
 
 :: --------- 配置参数，根据实际情况修改以下变量 ---------
 :: 要挂载的目标IP地址
+:: 是否使用多个IP地址随机挂载，使用一个固定IP地址，不设置此变量
+set "IP_TYPE="
+:: 多个 ip 需要修改以下 if 语句
+if defined IP_TYPE (
+  set "host[0]=172.20.25.101"
+  set "host[1]=172.20.25.102"
+  set "host[2]=172.20.25.103"
+  set max=3
+  set /a mod=!max
+  set /a rand_num=!random!%%!mod!+1
+  if !rand_num! equ 1 ( set "TARGET_IP=!host[0]!" )
+  if !rand_num! equ 2 ( set "TARGET_IP=!host[1]!" )
+  if !rand_num! equ 3 ( set "TARGET_IP=!host[2]!" )
+) else (
+::固定IP
 set "TARGET_IP=192.168.1.100"
+)
+
 :: 用户名
 set "USERNAME=user01"
 :: 用户密码
