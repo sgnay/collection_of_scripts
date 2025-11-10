@@ -30,7 +30,8 @@ log_error() {
 create_lock() {
     # 检查锁文件是否存在
     if [ -f "$LOCK_FILE" ]; then
-        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        local lock_pid
+        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
         # 检查进程是否还在运行
         if ps -p "$lock_pid" > /dev/null 2>&1; then
             log_error "锁文件已存在，进程 $lock_pid 正在运行，脚本退出"
@@ -42,8 +43,7 @@ create_lock() {
     fi
     
     # 创建锁文件
-    echo $$ > "$LOCK_FILE"
-    if [ $? -eq 0 ]; then
+    if echo $$ > "$LOCK_FILE"; then
         log_success "锁文件创建成功: $LOCK_FILE (PID: $$)"
         return 0
     else
@@ -63,7 +63,8 @@ remove_lock() {
 # 检查锁文件
 check_lock() {
     if [ -f "$LOCK_FILE" ]; then
-        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        local lock_pid
+        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
         if ps -p "$lock_pid" > /dev/null 2>&1; then
             log_error "另一个实例正在运行 (PID: $lock_pid)，当前脚本退出"
             return 1
@@ -78,14 +79,14 @@ check_lock() {
 
 # 检查是否在时间窗口内
 is_in_time_window() {
-    local current_hour=$(date +%H)
-    local current_minute=$(date +%M)
-    local current_time="${current_hour}:${current_minute}"
+    local current_hour current_minute start_hour start_minute end_hour end_minute
+    current_hour=$(date +%H)
+    current_minute=$(date +%M)
     
-    local start_hour=$(echo $DAILY_WINDOW_START | cut -d: -f1)
-    local start_minute=$(echo $DAILY_WINDOW_START | cut -d: -f2)
-    local end_hour=$(echo $DAILY_WINDOW_END | cut -d: -f1)
-    local end_minute=$(echo $DAILY_WINDOW_END | cut -d: -f2)
+    start_hour=$(echo $DAILY_WINDOW_START | cut -d: -f1)
+    start_minute=$(echo $DAILY_WINDOW_START | cut -d: -f2)
+    end_hour=$(echo $DAILY_WINDOW_END | cut -d: -f1)
+    end_minute=$(echo $DAILY_WINDOW_END | cut -d: -f2)
     
     # 如果开始时间小于结束时间（不跨天）
     if [ "$start_hour" -lt "$end_hour" ] || ([ "$start_hour" -eq "$end_hour" ] && [ "$start_minute" -lt "$end_minute" ]); then
@@ -111,11 +112,12 @@ is_in_time_window() {
 generate_file_list() {
     log_success "开始生成文件列表..."
     # 清空旧文件列表
-    > "$FILE_LIST"
+    : > "$FILE_LIST"
     
     # 使用find逐行写入文件，避免内存占用
     if find "$SOURCE_DIR" -type f > "$FILE_LIST" 2>/dev/null; then
-        local file_count=$(wc -l < "$FILE_LIST")
+        local file_count
+        file_count=$(wc -l < "$FILE_LIST")
         log_success "文件列表生成完成，共 $file_count 个文件"
         return 0
     else
@@ -145,8 +147,9 @@ get_next_task() {
     # 使用文件锁保护共享资源
     (
         flock -x 200
-        local completed=$(cat "$TASK_QUEUE/completed_tasks" 2>/dev/null || echo 0)
-        local total=$(cat "$TASK_QUEUE/total_tasks" 2>/dev/null || echo 0)
+        local completed total
+        completed=$(cat "$TASK_QUEUE/completed_tasks" 2>/dev/null || echo 0)
+        total=$(cat "$TASK_QUEUE/total_tasks" 2>/dev/null || echo 0)
         
         if [ "$completed" -lt "$total" ]; then
             let completed++
@@ -160,8 +163,9 @@ get_next_task() {
 
 # 获取任务进度
 get_task_progress() {
-    local total=$(cat "$TASK_QUEUE/total_tasks" 2>/dev/null || echo 0)
-    local completed=$(cat "$TASK_QUEUE/completed_tasks" 2>/dev/null || echo 0)
+    local total completed
+    total=$(cat "$TASK_QUEUE/total_tasks" 2>/dev/null || echo 0)
+    completed=$(cat "$TASK_QUEUE/completed_tasks" 2>/dev/null || echo 0)
     
     if [ "$total" -gt 0 ]; then
         echo "$completed/$total"
@@ -184,7 +188,8 @@ multi_thread_rsync() {
     # 初始化任务队列
     init_task_queue
     
-    local total_files=$(cat "$TASK_QUEUE/total_tasks")
+    local total_files
+    total_files=$(cat "$TASK_QUEUE/total_tasks")
     
     log_success "开始同步，总共 $total_files 个文件，使用 $thread_count 个线程"
     
@@ -198,7 +203,8 @@ multi_thread_rsync() {
             
             while true; do
                 # 获取下一个任务
-                local file_path=$(get_next_task)
+                local file_path
+                file_path=$(get_next_task)
                 if [ -z "$file_path" ]; then
                     # 没有更多任务
                     log_success "线程 $thread_id 完成所有任务"
@@ -206,9 +212,11 @@ multi_thread_rsync() {
                 fi
                 
                 if [ -f "$file_path" ]; then
-                    local relative_path="${file_path#$source_dir}"
+                    # 从 file_path 左边删除 source_dir
+                    local relative_path="${file_path#"$source_dir"}"
                     local dest_path="$dest_dir/$relative_path"
-                    local dest_dir_path="$(dirname "$dest_path")"
+                    local dest_dir_path
+                    dest_dir_path="$(dirname "$dest_path")"
                     
                     # 创建目标目录
                     mkdir -p "$dest_dir_path"
