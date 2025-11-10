@@ -3,8 +3,9 @@
 # 配置参数
 SOURCE_DIR="/home/sgnay/Downloads/android/"                    # 源目录
 DEST_DIR="/home/sgnay/Downloads/android_bak/"                # 目标目录
-DAILY_WINDOW_START="06:00"           # 每天开始时间 (24小时制)
-DAILY_WINDOW_END="22:00"             # 每天结束时间 (24小时制)
+# 多时间段配置 (格式: "开始时间-结束时间"，多个时间段用空格分隔)
+# 示例: "06:00-08:00 12:00-14:00 18:00-22:00"
+TIME_WINDOWS="06:00-08:00 12:00-13:00 14:00-20:00"           # 默认保持原有时间段
 RSYNC_THREADS=4                      # 并发线程数
 LOG_DIR="./rsync_daemon"      # 日志目录
 ERROR_LOG="$LOG_DIR/error.log"       # 错误日志
@@ -13,6 +14,7 @@ FILE_LIST="$LOG_DIR/file_list.txt"   # 文件列表临时文件
 LOCK_FILE="$LOG_DIR/rsync_daemon.lock" # 锁文件
 CHECK_INTERVAL=300                   # 检查间隔(秒)
 TASK_QUEUE="$LOG_DIR/task_queue"     # 任务队列目录
+FLAG="$LOG_DIR/flag" # flag 控制文件
 
 # 创建日志目录和任务队列
 mkdir -p "$LOG_DIR" "$TASK_QUEUE"
@@ -79,33 +81,41 @@ check_lock() {
 
 # 检查是否在时间窗口内
 is_in_time_window() {
-    local current_hour current_minute start_hour start_minute end_hour end_minute
+    local current_hour current_minute window
     current_hour=$(date +%H)
     current_minute=$(date +%M)
     
-    start_hour=$(echo $DAILY_WINDOW_START | cut -d: -f1)
-    start_minute=$(echo $DAILY_WINDOW_START | cut -d: -f2)
-    end_hour=$(echo $DAILY_WINDOW_END | cut -d: -f1)
-    end_minute=$(echo $DAILY_WINDOW_END | cut -d: -f2)
-    
-    # 如果开始时间小于结束时间（不跨天）
-    if [ "$start_hour" -lt "$end_hour" ] || ([ "$start_hour" -eq "$end_hour" ] && [ "$start_minute" -lt "$end_minute" ]); then
-        if [ "$current_hour" -gt "$start_hour" ] || ([ "$current_hour" -eq "$start_hour" ] && [ "$current_minute" -ge "$start_minute" ]); then
-            if [ "$current_hour" -lt "$end_hour" ] || ([ "$current_hour" -eq "$end_hour" ] && [ "$current_minute" -lt "$end_minute" ]); then
+    # 遍历所有时间段
+    for window in $TIME_WINDOWS; do
+        local start_time end_time start_hour start_minute end_hour end_minute
+        
+        # 分割时间段，格式为 "开始时间-结束时间"
+        start_time=$(echo "$window" | cut -d'-' -f1)
+        end_time=$(echo "$window" | cut -d'-' -f2)
+        
+        start_hour=$(echo "$start_time" | cut -d: -f1)
+        start_minute=$(echo "$start_time" | cut -d: -f2)
+        end_hour=$(echo "$end_time" | cut -d: -f1)
+        end_minute=$(echo "$end_time" | cut -d: -f2)
+        
+        # 如果开始时间小于结束时间（不跨天）
+        if [ "$start_hour" -lt "$end_hour" ] || ([ "$start_hour" -eq "$end_hour" ] && [ "$start_minute" -lt "$end_minute" ]); then
+            if [ "$current_hour" -gt "$start_hour" ] || ([ "$current_hour" -eq "$start_hour" ] && [ "$current_minute" -ge "$start_minute" ]); then
+                if [ "$current_hour" -lt "$end_hour" ] || ([ "$current_hour" -eq "$end_hour" ] && [ "$current_minute" -lt "$end_minute" ]); then
+                    return 0
+                fi
+            fi
+        else
+            # 跨天情况
+            if [ "$current_hour" -gt "$start_hour" ] || ([ "$current_hour" -eq "$start_hour" ] && [ "$current_minute" -ge "$start_minute" ]); then
+                return 0
+            elif [ "$current_hour" -lt "$end_hour" ] || ([ "$current_hour" -eq "$end_hour" ] && [ "$current_minute" -lt "$end_minute" ]); then
                 return 0
             fi
         fi
-        return 1
-    else
-        # 跨天情况
-        if [ "$current_hour" -gt "$start_hour" ] || ([ "$current_hour" -eq "$start_hour" ] && [ "$current_minute" -ge "$start_minute" ]); then
-            return 0
-        elif [ "$current_hour" -lt "$end_hour" ] || ([ "$current_hour" -eq "$end_hour" ] && [ "$current_minute" -lt "$end_minute" ]); then
-            return 0
-        else
-            return 1
-        fi
-    fi
+    done
+    
+    return 1
 }
 
 # 生成文件列表
@@ -174,6 +184,33 @@ get_task_progress() {
     fi
 }
 
+# 检查flag文件状态
+check_flag() {
+    if [ -f "$FLAG" ]; then
+        local flag_content
+        flag_content=$(cat "$FLAG" 2>/dev/null | tr -d '[:space:]')
+        case "$flag_content" in
+            "exit")
+                log_success "检测到退出标志，线程退出"
+                return 2
+                ;;
+            "pause")
+                log_success "检测到暂停标志，线程暂停 ${CHECK_INTERVAL}秒"
+                sleep "$CHECK_INTERVAL"
+                return 1
+                ;;
+            "kill")
+                log_success "检测到kill标志，终止程序"
+                return 3
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    fi
+    return 0
+}
+
 # 多线程rsync同步函数
 multi_thread_rsync() {
     local source_dir="$1"
@@ -202,6 +239,21 @@ multi_thread_rsync() {
             log_success "线程 $thread_id 启动"
             
             while true; do
+                # 检查flag文件状态
+                check_flag
+                local flag_status=$?
+                if [ $flag_status -eq 2 ]; then
+                    log_success "线程 $thread_id 收到退出信号，退出"
+                    break
+                elif [ $flag_status -eq 1 ]; then
+                    # 暂停状态，继续检查
+                    continue
+                elif [ $flag_status -eq 3 ]; then
+                    # 杀死主进程
+                    kill $$
+                    sleep 3
+                fi
+                
                 # 获取下一个任务
                 local file_path
                 file_path=$(get_next_task)
@@ -351,7 +403,7 @@ fi
 log_success "rsync守护进程启动"
 log_success "源目录: $SOURCE_DIR"
 log_success "目标目录: $DEST_DIR"
-log_success "时间窗口: $DAILY_WINDOW_START - $DAILY_WINDOW_END"
+log_success "时间窗口: $TIME_WINDOWS"
 log_success "并发线程数: $RSYNC_THREADS"
 log_success "检查间隔: ${CHECK_INTERVAL}秒"
 
