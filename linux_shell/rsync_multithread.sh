@@ -5,7 +5,7 @@ SOURCE_DIR="/home/sgnay/Downloads/android/"                    # 源目录
 DEST_DIR="/home/sgnay/Downloads/android_bak/"                # 目标目录
 # 多时间段配置 (格式: "开始时间-结束时间"，多个时间段用空格分隔)
 # 示例: "06:00-08:00 12:00-14:00 18:00-22:00"
-TIME_WINDOWS="06:00-08:00 12:00-13:00 14:00-20:00"           # 默认保持原有时间段
+TIME_WINDOWS="06:00-08:00 12:00-13:00 14:00-18:20"           # 默认保持原有时间段
 RSYNC_THREADS=4                      # 并发线程数
 LOG_DIR="./rsync_daemon"      # 日志目录
 ERROR_LOG="$LOG_DIR/error.log"       # 错误日志
@@ -184,33 +184,6 @@ get_task_progress() {
     fi
 }
 
-# 检查flag文件状态
-check_flag() {
-    if [ -f "$FLAG" ]; then
-        local flag_content
-        flag_content=$(cat "$FLAG" 2>/dev/null | tr -d '[:space:]')
-        case "$flag_content" in
-            "exit")
-                log_success "检测到退出标志，线程退出"
-                return 2
-                ;;
-            "pause")
-                log_success "检测到暂停标志，线程暂停 ${CHECK_INTERVAL}秒"
-                sleep "$CHECK_INTERVAL"
-                return 1
-                ;;
-            "kill")
-                log_success "检测到kill标志，终止程序"
-                return 3
-                ;;
-            *)
-                return 0
-                ;;
-        esac
-    fi
-    return 0
-}
-
 # 多线程rsync同步函数
 multi_thread_rsync() {
     local source_dir="$1"
@@ -240,20 +213,24 @@ multi_thread_rsync() {
             
             while true; do
                 # 检查flag文件状态
-                check_flag
-                local flag_status=$?
-                if [ $flag_status -eq 2 ]; then
-                    log_success "线程 $thread_id 收到退出信号，退出"
-                    break
-                elif [ $flag_status -eq 1 ]; then
-                    # 暂停状态，继续检查
-                    continue
-                elif [ $flag_status -eq 3 ]; then
-                    # 杀死主进程
+                local flag
+                flag=$(cat "$FLAG" 2>/dev/null)
+                if [ "$flag" = quit ] ; then
+                    log_success "收到退出信号，退出主进程"
                     kill $$
-                    sleep 3
+                    break
+                elif [ "$flag" = pause ] ; then
+                    # 暂停状态，继续检查
+                    log_success "收到暂停信号，线程暂停，等待下一次检查"
+                    sleep "$CHECK_INTERVAL"
                 fi
                 
+                # 检查时间窗口
+                until is_in_time_window ; do
+                    log_success "不在时间窗口内，等待下一次检查"
+                    sleep "$CHECK_INTERVAL"
+                done
+
                 # 获取下一个任务
                 local file_path
                 file_path=$(get_next_task)
@@ -262,9 +239,9 @@ multi_thread_rsync() {
                     log_success "线程 $thread_id 完成所有任务"
                     break
                 fi
-                
+
                 if [ -f "$file_path" ]; then
-                    # 从 file_path 左边删除 source_dir
+                    # 从 file_path 左边删除 source_dir，得到相对路径
                     local relative_path="${file_path#"$source_dir"}"
                     local dest_path="$dest_dir/$relative_path"
                     local dest_dir_path
@@ -273,7 +250,7 @@ multi_thread_rsync() {
                     # 创建目标目录
                     mkdir -p "$dest_dir_path"
                     
-                    # 使用rsync同步文件
+                    # 使用 rsync 同步文件
                     rsync_start_time=$(date +%s)
                     if rsync -avzcP "$file_path" "$dest_path" 2>>"$ERROR_LOG"; then
                         rsync_end_time=$(date +%s)
