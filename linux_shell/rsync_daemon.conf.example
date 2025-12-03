@@ -1,0 +1,25 @@
+# rsync_multithread.sh 配置文件示例
+# 复制此文件为 rsync_daemon.conf 并根据需要修改配置
+
+# 基本配置
+SOURCE_DIR="/home/sgnay/Downloads/android/"
+DEST_DIR="/home/sgnay/Downloads/android_bak/"
+
+# 时间窗口配置 (格式: "开始时间-结束时间"，多个时间段用空格分隔)
+# 示例: "06:00-08:00 12:00-14:00 18:00-22:00"
+TIME_WINDOWS="06:00-08:00 12:00-13:00 14:00-18:20 22:00-23:30"
+
+# 性能配置
+RSYNC_THREADS=4
+BANDWIDTH_LIMIT="10M"  # 带宽限制，如: "10M" (10MB/s), "100K" (100KB/s)，留空表示无限制
+
+# 时间和空间配置
+CHECK_INTERVAL=300      # 检查间隔(秒)
+MIN_FREE_SPACE_MB=4096  # 最小保留空间(MB)
+
+# 重试配置
+MAX_RETRY_COUNT=3       # 最大重试次数
+BASE_RETRY_DELAY=10     # 基础重试延迟(秒)，实际延迟会使用指数退避算法
+
+# 日志配置
+LOG_DIR="./rsync_daemon"
