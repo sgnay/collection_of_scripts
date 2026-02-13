@@ -78,7 +78,7 @@ EOF
 # 默认配置参数
 SOURCE_DIR="/home/sgnay/Downloads/android/"
 DEST_DIR="/home/sgnay/Downloads/android_bak/"
-TIME_WINDOWS="06:00-08:00 12:00-13:00 14:00-18:20 22:00-23:30"
+TIME_WINDOWS="06:00-08:00 12:00-13:00 14:00-18:20 21:00-23:30"
 RSYNC_THREADS=4
 BANDWIDTH_LIMIT=""
 LOG_DIR="./rsync_daemon"
@@ -231,8 +231,8 @@ stop_daemon() {
                 # 如果优雅停止失败，强制杀死进程
                 kill -KILL "$lock_pid"
             fi
-            cleanup
             echo "守护进程已停止"
+            cleanup
         else
             echo "没有运行中的守护进程"
         fi
@@ -240,9 +240,6 @@ stop_daemon() {
         echo "锁文件不存在，没有运行中的守护进程"
     fi
 }
-
-# 创建日志目录和任务队列
-mkdir -p "$LOG_DIR" "$TASK_QUEUE"
 
 # 记录成功日志
 # 功能：记录成功操作的日志信息
@@ -279,6 +276,48 @@ log_info() {
     message="$(date '+%Y-%m-%d %H:%M:%S') - INFO - $1"
     # 仅在详细模式下输出到控制台，不写入日志文件
     [ "$VERBOSE" = true ] && echo "$message"
+}
+
+#!/bin/bash
+
+# 函数：将字节数转换为人类可读格式（自动选择单位）
+# 用法：human_readable_size <字节数>
+# 示例：human_readable_size 368612   # 输出：359.97 KB
+human_readable_size() {
+    local bytes=$1
+    # 处理空值或负数
+    if [[ -z "$bytes" || "$bytes" -lt 0 ]]; then
+        echo "0 B"
+        return
+    fi
+
+    # 使用 awk 进行浮点计算和格式化
+    echo "$bytes" | awk '
+    function human_readable(size) {
+        units[1] = "B"
+        units[2] = "KB"
+        units[3] = "MB"
+        units[4] = "GB"
+        units[5] = "TB"
+        units[6] = "PB"
+
+        idx = 1
+        val = size
+        while (val >= 1024 && idx < 6) {
+            val /= 1024
+            idx++
+        }
+
+        if (idx == 1) {
+            # 小于 1024 字节，直接输出整数
+            printf "%d %s\n", val, units[idx]
+        } else {
+            # 大于等于 1024 字节，保留两位小数
+            printf "%.2f %s\n", val, units[idx]
+        }
+    }
+
+    { human_readable($0) }'
 }
 
 # 创建锁文件
@@ -692,7 +731,7 @@ sync_with_retry() {
         
         # 执行rsync并捕获错误输出
         local error_output
-        error_output=$(rsync $rsync_args "$file_path" "$dest_path" 2>&1)
+        error_output=$(rsync $rsync_args "$file_path" "$dest_path" 2>&1) # 注意这里 $rsync_args 不用双引号，否则 rsync 会不识别参数
         local rsync_exit_code=$?
         
         if [ $rsync_exit_code -eq 0 ]; then
@@ -815,6 +854,7 @@ multi_thread_rsync() {
 
     # 创建进程数组
     local pids=()
+    ((rsync_start_time=$(date +%s)))
     
     for ((i=1; i<=thread_count; i++)); do
         (
@@ -872,15 +912,14 @@ multi_thread_rsync() {
                     mkdir -p "$dest_dir_path"
                     
                     # 使用带重试的rsync同步文件
-                    rsync_start_time=$(date +%s)
                     sync_result=$(sync_with_retry "$file_path" "$dest_path" "$relative_path")
                     
                     if [ "$sync_result" = "success" ]; then
-                        rsync_end_time=$(date +%s)
-                        rsync_duration=$(echo | awk "{print $rsync_end_time-$rsync_start_time+0.01}") # 避免速率出现 0
-                        average_rate=$(echo | awk "{print $file_size/1024/$rsync_duration}")
-                        available_space=$((free_space-file_size)) # 更新剩余可用空间
-                        log_success "同步成功: $relative_path (进度: $(get_task_progress)), 文件大小: $((file_size/1048576)) MB, 同步耗时: $rsync_duration 秒, 平均速度: $average_rate KB/s， 目标剩余空间 $((available_space/1073741824)) GB"
+                        rsync_thread_end_time=$(date +%s)
+                        rsync_duration=$((rsync_thread_end_time-rsync_start_time+1)) # 计算耗时，加 1 避免出现 0
+                        available_space=$((available_space-file_size)) # 更新剩余可用空间
+                        average_rate=$(((free_space-MIN_FREE_SPACE_MB*1024*1024)/1024/1024/rsync_duration)) # 计算平均速度
+                        log_success "同步成功: $relative_path (进度: $(get_task_progress)), 文件大小: $(human_readable_size "$file_size"), 同步耗时: $rsync_duration 秒, 平均速度: $average_rate KB/s， 目标剩余空间 $((available_space/1073741824)) GB"
                     else
                         # 提取错误信息
                         local error_msg
@@ -1097,6 +1136,10 @@ main() {
         }
     fi
     
+
+    # 创建日志目录和任务队列
+    mkdir -p "$LOG_DIR" "$TASK_QUEUE"
+
     # 检查必要的系统命令
     if ! command -v flock >/dev/null 2>&1; then
         echo "错误: flock 命令不可用，请安装 util-linux 包" | tee -a "$ERROR_LOG"
