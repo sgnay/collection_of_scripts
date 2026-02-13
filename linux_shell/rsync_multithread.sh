@@ -231,6 +231,7 @@ stop_daemon() {
                 # 如果优雅停止失败，强制杀死进程
                 kill -KILL "$lock_pid"
             fi
+            cleanup
             echo "守护进程已停止"
         else
             echo "没有运行中的守护进程"
@@ -385,14 +386,14 @@ check_single_window() {
     current_minutes=$((10#$current_hour * 60 + 10#$current_minute))
     
     # 处理两种情况：
-    if [ "$start_minutes" -le "$end_minutes" ]; then
+    if ((start_minutes<=end_minutes)) ; then
         # 不跨天：开始时间 < 结束时间（如：06:00-08:00）
         # 当前时间必须在开始和结束时间之间
-        [ "$current_minutes" -ge "$start_minutes" ] && [ "$current_minutes" -lt "$end_minutes" ]
+        ((current_minutes>=start_minutes)) && ((current_minutes<end_minutes))
     else
         # 跨天：开始时间 > 结束时间（如：22:00-06:00）
         # 当前时间要么在开始时间之后，要么在结束时间之前
-        [ "$current_minutes" -ge "$start_minutes" ] || [ "$current_minutes" -lt "$end_minutes" ]
+        ((current_minutes>=start_minutes)) || ((current_minutes<end_minutes))
     fi
 }
 
@@ -444,7 +445,7 @@ generate_file_list() {
     local skipped_count=0
     
     # 根据是否有时间戳选择同步策略
-    if [ "$last_sync_timestamp" -gt 0 ]; then
+    if ((last_sync_timestamp>0)) ; then
         # 增量同步：只处理修改时间晚于最后同步时间的文件
         # 使用find -print0和read -d ''处理包含空格的文件名
         while IFS= read -r -d '' file_path; do
@@ -453,7 +454,7 @@ generate_file_list() {
             file_mtime=$(stat -c %Y "$file_path" 2>/dev/null || echo 0)
             
             # 比较文件修改时间与最后同步时间
-            if [ "$file_mtime" -gt "$last_sync_timestamp" ]; then
+            if ((file_mtime>last_sync_timestamp)) ; then
                 # 文件在最后同步后被修改，加入同步列表
                 echo "$file_path" >> "$FILE_LIST"
                 ((file_count++))
@@ -526,7 +527,7 @@ get_next_task() {
         total=$(cat "$TASK_QUEUE/total_tasks" 2>/dev/null || echo 0)
         
         # 检查是否还有未完成的任务
-        if [ "$completed" -lt "$total" ]; then
+        if ((completed<total)) ; then
             # 增加已完成计数
             ((completed++))
             # 更新已完成任务计数
@@ -550,59 +551,13 @@ get_task_progress() {
     completed=$(cat "$TASK_QUEUE/completed_tasks" 2>/dev/null || echo 0)
     
     # 格式化输出进度
-    if [ "$total" -gt 0 ]; then
+    if ((total>0)) ; then
         echo "$completed/$total"
     else
         echo "0/0"
     fi
 }
 
-# 检查磁盘空间
-# 功能：在同步文件前检查目标磁盘是否有足够空间
-# 参数：
-#   $1 - 要同步的文件路径
-#   $2 - 目标目录路径
-# 检查逻辑：
-#   1. 获取源文件大小
-#   2. 获取目标磁盘可用空间
-#   3. 计算所需空间 = 文件大小 + 最小保留空间
-#   4. 如果空间不足，设置标志并记录错误
-# 返回：0空间充足，1空间不足
-check_disk_space() {
-    local file_path="$1"
-    local dest_dir="$2"
-    
-    # 获取文件大小（字节），如果文件不存在则为0
-    local file_size
-    if [ -f "$file_path" ]; then
-        file_size=$(stat -c %s "$file_path" 2>/dev/null || echo 0)
-    else
-        file_size=0
-    fi
-    
-    # 获取目标磁盘可用空间（字节）
-    # df -B1：以字节为单位显示，awk NR==2取第二行数据，print $4取可用空间列
-    local available_space
-    available_space=$(df -B1 "$dest_dir" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
-    
-    # 计算最小保留空间（字节）- 配置项转换为字节
-    local min_free_space_bytes
-    min_free_space_bytes=$((MIN_FREE_SPACE_MB * 1024 * 1024))
-    
-    # 计算所需总空间 = 文件大小 + 保留空间
-    local required_space
-    required_space=$((file_size + min_free_space_bytes))
-    
-    # 检查空间是否充足
-    if [ "$available_space" -lt "$required_space" ]; then
-        # 空间不足，写入标志文件通知所有线程停止
-        echo "full" > "$FLAG"
-        log_error "磁盘空间不足：文件大小 ${file_size} 字节，可用空间 ${available_space} 字节，需要至少 ${required_space} 字节（含 ${MIN_FREE_SPACE_MB}MB 保留空间）"
-        return 1
-    fi
-    
-    return 0  # 空间充足
-}
 
 # 错误分类函数
 # 功能：根据rsync错误输出自动分类错误类型
@@ -726,8 +681,8 @@ sync_with_retry() {
     fi
     
     # 重试循环，支持指数退避
-    while [ $retry_count -lt $MAX_RETRY_COUNT ] && [ "$success" = false ]; do
-        if [ $retry_count -gt 0 ]; then
+    while ((retry_count<MAX_RETRY_COUNT)) && [ "$success" = false ]; do
+        if ((retry_count>0)); then
             # 指数退避算法：2^retry_count * BASE_RETRY_DELAY
             # 例如：第1次重试等待10秒，第2次等待20秒，第3次等待40秒
             local backoff_delay=$((BASE_RETRY_DELAY * (1 << (retry_count - 1))))
@@ -760,7 +715,7 @@ sync_with_retry() {
                     ;;
                 "permission_error")
                     # 权限错误通常无法通过重试解决
-                    if [ $retry_count -ge 2 ]; then
+                    if ((retry_count>=2)) ; then
                         log_error "权限错误，跳过文件: $relative_path"
                         return 1
                     fi
@@ -800,12 +755,12 @@ show_error_report() {
             
             local recent_failures
             recent_failures=$(jq '.failed_files | length' "$ERROR_STATS_FILE")
-            if [ "$recent_failures" -gt 0 ]; then
+            if ((recent_failures>0)) ; then
                 log_success "最近失败的文件 (最多100个):"
                 jq -r '.failed_files[-5:] | .[] | "  \(.timestamp) - \(.error_type) - \(.file)"' "$ERROR_STATS_FILE" | while read -r line; do
                     log_success "$line"
                 done
-                if [ "$recent_failures" -gt 5 ]; then
+                if ((recent_failures>5)) ; then
                     log_success "  ... 还有 $((recent_failures - 5)) 个失败记录"
                 fi
             fi
@@ -837,10 +792,10 @@ multi_thread_rsync() {
     generate_file_list
     local generate_result=$?
     
-    if [ $generate_result -eq 1 ]; then
+    if ((generate_result==1)) ; then
         # 生成文件列表失败
         return 1
-    elif [ $generate_result -eq 2 ]; then
+    elif ((generate_result==2)) ; then
         # 没有文件需要同步
         return 2
     fi
@@ -852,7 +807,12 @@ multi_thread_rsync() {
     total_files=$(cat "$TASK_QUEUE/total_tasks")
     
     log_success "开始同步，总共 $total_files 个文件，使用 $thread_count 个线程"
-    
+
+    # 获取目标磁盘剩余空间（字节）
+    ((free_space+=$(df -B1 "$DEST_DIR" 2>/dev/null | awk 'NR==2 {print $4}')))
+    # 去掉最小预留的可用空间
+    ((available_space=free_space-MIN_FREE_SPACE_MB*1024*1024))
+
     # 创建进程数组
     local pids=()
     
@@ -867,11 +827,11 @@ multi_thread_rsync() {
                 flag=$(cat "$FLAG" 2>/dev/null)
                 if [ "$flag" = quit ] ; then
                     log_success "收到退出信号，退出主进程"
-                    kill $$
+                    stop_daemon
                     break
                 elif [ "$flag" = full ] ; then
                     log_error "目标空间不足，退出主进程"
-                    kill $$
+                    stop_daemon
                     break
                 elif [ "$flag" = pause ] ; then
                     # 暂停状态，继续检查
@@ -895,18 +855,19 @@ multi_thread_rsync() {
                 fi
 
                 if [ -f "$file_path" ]; then
-                    # 检查磁盘空间
-                    if ! check_disk_space "$file_path" "$dest_dir"; then
-                        log_error "磁盘空间检查失败，跳过文件: $file_path"
-                        continue
-                    fi
-                    
                     # 从 file_path 左边删除 source_dir，得到相对路径
                     local relative_path="${file_path#"$source_dir"}"
                     local dest_path="$dest_dir/$relative_path"
                     local dest_dir_path
                     dest_dir_path="$(dirname "$dest_path")"
                     
+                    # 检查磁盘剩余空间是否足够，可用空间 - 将要同步文件大小 > 0
+                    file_size=$(stat -c %s "$file_path")
+                    if (((free_space-file_size)<0)) ; then
+                        log_error "目标空间不足，退出！"
+                        stop_daemon
+                    fi
+                                        
                     # 创建目标目录
                     mkdir -p "$dest_dir_path"
                     
@@ -916,11 +877,10 @@ multi_thread_rsync() {
                     
                     if [ "$sync_result" = "success" ]; then
                         rsync_end_time=$(date +%s)
-                        rsync_duration=$(echo | awk "{print $rsync_end_time-$rsync_start_time+0.01}") # 防止出现0
-                        file_size=$(stat -c %s "$file_path")
-                        file_size_kb=$(echo | awk "{print $file_size/1024}")
-                        average_rate=$(echo | awk "{print $file_size_kb/$rsync_duration}")
-                        log_success "同步成功: $relative_path (进度: $(get_task_progress)), 文件大小: $file_size_kb KB, 同步耗时: $rsync_duration 秒, 平均速度: $average_rate KB/s"
+                        rsync_duration=$(echo | awk "{print $rsync_end_time-$rsync_start_time+0.01}") # 避免速率出现 0
+                        average_rate=$(echo | awk "{print $file_size/1024/$rsync_duration}")
+                        available_space=$((free_space-file_size)) # 更新剩余可用空间
+                        log_success "同步成功: $relative_path (进度: $(get_task_progress)), 文件大小: $((file_size/1048576)) MB, 同步耗时: $rsync_duration 秒, 平均速度: $average_rate KB/s， 目标剩余空间 $((available_space/1073741824)) GB"
                     else
                         # 提取错误信息
                         local error_msg
@@ -942,7 +902,7 @@ multi_thread_rsync() {
     
     for pid in "${pids[@]}"; do
         if wait "$pid"; then
-            completed=$((completed + 1))
+            ((completed++))
         fi
     done
     
@@ -975,10 +935,10 @@ wait_for_rsync_completion() {
     local waited=0
     
     # 循环检查rsync进程状态
-    while is_rsync_running && [ $waited -lt $timeout ]; do
+    while is_rsync_running && ((waited<timeout)) ; do
         log_success "等待rsync进程完成... (已等待 ${waited}秒)"
         sleep 10
-        waited=$((waited + 10))
+        ((waited+=10))
     done
     
     # 检查是否超时
@@ -1086,9 +1046,6 @@ cleanup() {
     
     # 删除锁文件，允许下次启动
     remove_lock
-    
-    # 等待可能正在运行的rsync进程完成
-    wait_for_rsync_completion
     
     # 退出脚本
     exit 0

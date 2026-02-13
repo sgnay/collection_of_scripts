@@ -64,7 +64,7 @@ vim rsync_daemon.conf
 ## 命令行参数
 
 | 参数 | 长参数 | 说明 | 默认值 |
-|------|--------|------|--------|
+| ------ | -------- | ------ | -------- |
 | `-c` | `--config` | 配置文件路径 | `./rsync_daemon.conf` |
 | `-s` | `--source` | 源目录路径 | `/home/sgnay/Downloads/android/` |
 | `-d` | `--dest` | 目标目录路径 | `/home/sgnay/Downloads/android_bak/` |
@@ -123,6 +123,7 @@ TIME_WINDOWS="22:00-06:00"
 ## 带宽限制格式
 
 支持以下格式：
+
 - `"10M"` - 10MB/s
 - `"100K"` - 100KB/s
 - `"1G"` - 1GB/s
@@ -154,6 +155,7 @@ TIME_WINDOWS="22:00-06:00"
 脚本支持基于文件修改时间的智能增量同步：
 
 ### 工作原理
+
 1. **时间戳记录**：每次成功同步后，脚本会在 `last_sync_time` 文件中记录当前时间戳
 2. **文件筛选**：下次同步时，只会处理修改时间晚于最后同步时间戳的文件
 3. **自动切换**：
@@ -162,13 +164,15 @@ TIME_WINDOWS="22:00-06:00"
    - 如果没有文件需要同步，会记录相应日志并更新时间戳
 
 ### 优势
+
 - **效率提升**：避免重复传输未修改的文件
 - **带宽节省**：只传输有变化的文件
 - **时间优化**：大幅缩短同步时间
 - **智能识别**：基于文件系统时间戳，准确判断文件变化
 
 ### 日志示例
-```
+
+```bash
 2024-01-01 10:00:00 - SUCCESS - 读取最后同步时间: 2024-01-01 06:00:00
 2024-01-01 10:00:01 - SUCCESS - 增量同步文件列表生成完成，新增/修改 15 个文件，跳过 1250 个未修改文件
 ```
@@ -205,6 +209,7 @@ tail -f ./rsync_daemon/error.log
 ### 错误统计报告
 
 脚本会自动生成错误统计报告，包含：
+
 - 总错误数
 - 按错误类型分类的统计
 - 最近失败的文件列表（最多100个）
@@ -228,6 +233,7 @@ rm -f ./rsync_daemon/file_list.txt
 ### 常见问题
 
 1. **权限错误**
+
    ```bash
    # 确保脚本有执行权限
    chmod +x rsync_multithread.sh
@@ -236,6 +242,7 @@ rm -f ./rsync_daemon/file_list.txt
    ```
 
 2. **flock 命令不可用**
+
    ```bash
    # Ubuntu/Debian
    sudo apt-get install util-linux
@@ -245,6 +252,7 @@ rm -f ./rsync_daemon/file_list.txt
    ```
 
 3. **rsync 命令不可用**
+
    ```bash
    # Ubuntu/Debian
    sudo apt-get install rsync
@@ -254,15 +262,16 @@ rm -f ./rsync_daemon/file_list.txt
    ```
 
 4. **配置文件权限问题**
+
    ```bash
    # 确保配置文件可读
    chmod 644 rsync_daemon.conf
    ```
 
 5. **JSON错误统计文件损坏**
-   
+
    当脚本异常中断时，可能会出现JSON格式错误。脚本会自动检测并修复，也可以手动修复：
-   
+
    ```bash
    # 使用修复工具
    ./fix_error_stats.sh
@@ -270,7 +279,7 @@ rm -f ./rsync_daemon/file_list.txt
    # 或者手动删除重建
    rm -f ./rsync_daemon/error_stats.json
    ```
-   
+
    脚本具有以下自动恢复机制：
    - **自动检测**：启动时验证JSON文件格式
    - **自动备份**：损坏文件会自动备份
